@@ -1865,7 +1865,7 @@ input[type=range]::-webkit-slider-thumb {
       <button class="btn-secondary active" id="year-btn-2025" onclick="setCampaignYear(2025)">2025 MODE</button>
       <button class="btn-secondary" id="year-btn-2021" onclick="setCampaignYear(2021)">2021 MODE</button>
     </div>
-    <button class="btn-primary" onclick="showScreen('party-select')">BEGIN CAMPAIGN</button>
+    <button class="btn-primary" onclick="openPartySelect()">BEGIN CAMPAIGN</button>
   </div>
 </div>
 
@@ -2300,8 +2300,9 @@ function getCampaignConfig() {
   return CAMPAIGN_YEAR_CONFIG[selectedCampaignYear] || CAMPAIGN_YEAR_CONFIG[2025];
 }
 
-function getBasePolling(partyId) {
-  const values = PARTY_BASE_POLLING_BY_YEAR[selectedCampaignYear] || PARTY_BASE_POLLING_BY_YEAR[2025];
+function getBasePolling(partyId, year = null) {
+  const resolvedYear = Number.isFinite(year) ? year : getCurrentNarrativeYear();
+  const values = PARTY_BASE_POLLING_BY_YEAR[resolvedYear] || PARTY_BASE_POLLING_BY_YEAR[selectedCampaignYear] || PARTY_BASE_POLLING_BY_YEAR[2025];
   return values[partyId] ?? 0;
 }
 
@@ -2959,6 +2960,17 @@ function ensureCampaignGeoDataYear(year = selectedCampaignYear, resetDistrictVot
   if (resetDistrictVotes) syncDistrictVotesToGeoData();
 }
 
+function applyCampaignYearState(year, { resetDistrictVotes = false, refreshUI = false, resetSelection = true } = {}) {
+  const targetYear = Number(year) === 2021 ? 2021 : 2025;
+  selectedCampaignYear = targetYear;
+  replaceArrayContents(WEEKLY_ISSUES, targetYear === 2021 ? WEEKLY_ISSUES_2021 : WEEKLY_ISSUES_2025);
+  ensureCampaignGeoDataYear(targetYear, resetDistrictVotes);
+  applyCampaignYearContent(targetYear);
+  PARTY_DATA.forEach(p => { p.basePolling = getBasePolling(p.id, targetYear); });
+  DEBATE_ROUNDS = buildDebateRounds();
+  if (refreshUI) refreshCampaignYearUI(resetSelection);
+}
+
 function replaceObjectContents(target, source) {
   Object.keys(target).forEach(key => delete target[key]);
   Object.keys(source).forEach(key => { target[key] = cloneData(source[key]); });
@@ -3183,13 +3195,7 @@ function refreshCampaignYearUI(resetSelection = true) {
 }
 
 function setCampaignYear(year) {
-  selectedCampaignYear = Number(year) === 2021 ? 2021 : 2025;
-  replaceArrayContents(WEEKLY_ISSUES, selectedCampaignYear === 2021 ? WEEKLY_ISSUES_2021 : WEEKLY_ISSUES_2025);
-  syncGeoDataForYear(selectedCampaignYear);
-  syncDistrictVotesToGeoData();
-  applyCampaignYearContent(selectedCampaignYear);
-  DEBATE_ROUNDS = buildDebateRounds();
-  refreshCampaignYearUI(true);
+  applyCampaignYearState(year, { resetDistrictVotes: true, refreshUI: true, resetSelection: true });
   if (gameState?.leafletMap) renderGameMap();
 }
 
@@ -3285,8 +3291,10 @@ function playElectionNightAudio() {
 function buildPartyGrid() {
   const grid = document.getElementById('partyGrid');
   const cfg = getCampaignConfig();
+  const year = selectedCampaignYear;
   grid.innerHTML = '';
   PARTY_DATA.forEach(p => {
+    const displayPolling = getBasePolling(p.id, year);
     const card = document.createElement('div');
     card.className = 'party-card';
     card.style.setProperty('--party-color', p.color);
@@ -3294,7 +3302,7 @@ function buildPartyGrid() {
       <div class="party-card-name" style="color:${p.color}">${p.name}</div>
       <div class="party-card-full">${p.full}</div>
       <div class="party-card-spectrum">${p.spectrum}</div>
-      <div class="party-card-poll">${p.basePolling}%</div>
+      <div class="party-card-poll">${displayPolling}%</div>
       <div class="party-card-poll-label">${cfg.partyResultLabel || 'Election result'}</div>
     `;
     card.onclick = () => selectParty(p.id, card);
@@ -3304,6 +3312,11 @@ function buildPartyGrid() {
 
 let selectedPartyId = null;
 let selectedCampaignIssue = null; // the chosen mandate profile object
+
+function openPartySelect() {
+  applyCampaignYearState(selectedCampaignYear, { resetDistrictVotes: false, refreshUI: true, resetSelection: true });
+  showScreen('party-select');
+}
 
 function selectParty(id, card) {
   document.querySelectorAll('.party-card').forEach(c => c.classList.remove('selected'));
@@ -3404,7 +3417,7 @@ function startCampaign() {
   gameState._isSnapElection = false;
   gameState.playerParty = selectedPartyId;
   gameState.electionYear = getCampaignConfig().electionYear;
-  ensureCampaignGeoDataYear(gameState.electionYear, true);
+  applyCampaignYearState(gameState.electionYear, { resetDistrictVotes: true, refreshUI: false });
 
   // Init political trend (persists and drifts across elections)
   initPoliticalTrend();
@@ -3680,7 +3693,7 @@ function toGeoJSON(d) {
 }
 
 function initMap() {
-  ensureCampaignGeoDataYear(gameState?.electionYear || selectedCampaignYear);
+  applyCampaignYearState(gameState?.electionYear || selectedCampaignYear, { resetDistrictVotes: false, refreshUI: false });
   if (gameState.leafletMap) {
     gameState.leafletMap.remove();
     gameState.leafletMap = null;
